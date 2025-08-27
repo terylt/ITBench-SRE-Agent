@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import asyncio
 import logging
 import os
 import re
 import subprocess
 from typing import Any, Dict, Optional, Type
-
+import asyncio
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 from crewai.tools.base_tool import BaseTool
 from pydantic import BaseModel, Field
 from lumyn.tools.linting.kubectl_linter import KubectlLinter
@@ -27,13 +29,16 @@ from lumyn.config.tools import NL2KubectlCustomToolInputPrompt, NL2KubectlCustom
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+ENV_MCP_SERVER_URL = "MCP_SERVER_URL"
+
+MCP_SERVER_URL = os.environ.get(ENV_MCP_SERVER_URL, "http://localhost:8000/sse")
+
 
 class NL2KubectlCustomToolInput(BaseModel):
     nl_query: str = Field(
         title="NL Query",
         description=NL2KubectlCustomToolInputPrompt,
     )
-
 
 class NL2KubectlCustomTool(BaseTool):
     name: str = "NL2Kubectl Tool"
@@ -94,17 +99,24 @@ class NL2KubectlCustomTool(BaseTool):
         print(f"NL2Kubectl Tool command returned: {command_of_interest}")
         return command_of_interest
 
+    async def _run_execute_kubectl_command(self, command: str): #-> Optional[Dict[str, Any]]:
+        async with sse_client(MCP_SERVER_URL) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                print("started call tools--------------")
+                result = await session.call_tool(
+                    name="kubectl-executor",
+                    arguments={"command": command})
+                print(result)
+                print("ended call tools--------------")
+                return result.content
+
     def _execute_kubectl_command(self, command: str): #-> Optional[Dict[str, Any]]:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            logger.info(f"NL2Kubectl Tool command execution: {result.stdout}")
-            print(f"NL2Kubectl Tool command execution: {result.stdout}")
-            return result.stdout, result.returncode
-        else:
-            print(f"Error executing kubectl command: {result.stderr}")
-            logger.error(f"Error executing kubectl command: {result.stderr}")
-            return f"Error executing kubectl command: {result.stderr}", result.returncode
-        
+        results=asyncio.run(self._run_execute_kubectl_command(command))
+        stdout=results[0].text
+        returncode=int(results[1].text)
+        return stdout, returncode
+
     def _summarize_kubernetes(self, kubernetes):
         system_prompt = "You do kubectl output analysis and summarization. Look at the kubectl output given to you and provide a brief summary and analysis of them."
         kubernetes_summary = self.llm_backend.inference(system_prompt, kubernetes)
