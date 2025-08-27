@@ -30,8 +30,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 ENV_MCP_SERVER_URL = "MCP_SERVER_URL"
+ENV_BEARER_AUTH_TOKEN = "BEARER_AUTH_TOKEN"
+ENV_KUBECTL_TOOL_NAME = "KUBECTL_TOOL_NAME"
 
 MCP_SERVER_URL = os.environ.get(ENV_MCP_SERVER_URL, "http://localhost:8000/sse")
+BEARER_AUTH_TOKEN = os.environ.get(ENV_BEARER_AUTH_TOKEN, None)
+KUBECTL_TOOL_NAME = os.environ.get(ENV_KUBECTL_TOOL_NAME, "kubectl-executor")
 
 
 class NL2KubectlCustomToolInput(BaseModel):
@@ -100,12 +104,16 @@ class NL2KubectlCustomTool(BaseTool):
         return command_of_interest
 
     async def _run_execute_kubectl_command(self, command: str): #-> Optional[Dict[str, Any]]:
-        async with sse_client(MCP_SERVER_URL) as (read, write):
+        headers = None
+        if BEARER_AUTH_TOKEN:
+            headers = {"Authorization": f"Bearer {BEARER_AUTH_TOKEN}"}
+        
+        async with sse_client(MCP_SERVER_URL, headers=headers) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 print("started call tools--------------")
                 result = await session.call_tool(
-                    name="kubectl-executor",
+                    name=KUBECTL_TOOL_NAME,
                     arguments={"command": command})
                 print(result)
                 print("ended call tools--------------")
